@@ -1,0 +1,5 @@
+{
+  "name": "runtime-gate",
+  "version": "0.1.0",
+  "description": "Example runtime tool gate: blocks, escalates or rewrites Claude Code tool calls before they execute."
+}

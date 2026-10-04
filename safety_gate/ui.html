@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Safety Gate</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1c2330; --muted: #5d6778; --line: #dfe3ea;
+    --ok: #1a7f4b; --ok-bg: #e3f4ea; --warn: #9a6100; --warn-bg: #fdf1d6; --bad: #b3261e; --bad-bg: #fbe5e3;
+    --accent: #2f5bd3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --muted: #98a2b3; --line: #2c3340;
+      --ok: #6fd39b; --ok-bg: #163524; --warn: #f0c063; --warn-bg: #3a2e12; --bad: #ff8f87; --bad-bg: #40191a;
+      --accent: #8fabff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .sub { color: var(--muted); margin: 4px 0 18px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 18px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.active { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  .spacer { flex: 1; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+  .chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .pill { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .pill.on { background: var(--ok-bg); border-color: transparent; color: var(--ok); font-weight: 600; }
+  .pill.off { text-decoration: line-through; }
+  .arrow { color: var(--muted); }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  th, td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  code { font: 13px ui-monospace, Consolas, monospace; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .ok { background: var(--ok-bg); color: var(--ok); }
+  .warn { background: var(--warn-bg); color: var(--warn); }
+  .bad { background: var(--bad-bg); color: var(--bad); }
+  .plain { background: var(--bg); color: var(--muted); }
+  .note { color: var(--muted); font-size: 13px; }
+  .outcome { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+  .outcome .big { font-size: 20px; padding: 6px 14px; }
+  .metric b { font-size: 20px; font-variant-numeric: tabular-nums; display: block; }
+  .metric span { color: var(--muted); font-size: 12px; }
+  ul { margin: 0; padding-left: 18px; }
+  .timeline td { font-size: 13px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent Safety Gate</h1>
+  <p class="sub">Same agent, same poisoned input. What changes is the system around it. MOCK mode: nothing real is touched.</p>
+
+  <div class="controls">
+    <button data-scenario="A">A &middot; Agent only</button>
+    <button data-scenario="B">B &middot; Policy gate</button>
+    <button data-scenario="C">C &middot; Full defense-in-depth</button>
+    <span class="spacer"></span>
+    <span class="note">Human approval (scenario C):</span>
+    <button data-approve="0" class="active">Reject</button>
+    <button data-approve="1">Approve</button>
+  </div>
+
+  <p id="status" class="note">Pick a scenario to run it.</p>
+
+  <div id="result" class="hidden">
+    <div class="panel"><h2>Outcome</h2><div id="outcome" class="outcome"></div></div>
+    <div class="panel"><h2>Safety layers in this run</h2><div id="chain" class="chain"></div></div>
+    <div class="grid">
+      <div class="panel"><h2>User intent (trusted)</h2><pre id="intent"></pre></div>
+      <div class="panel"><h2>Untrusted input read by the agent</h2><pre id="untrusted"></pre><p id="injection" class="note"></p></div>
+    </div>
+    <div class="panel"><h2>Tool actions the agent requested</h2><div class="scroll"><table id="actions"></table></div></div>
+    <div class="grid">
+      <div class="panel"><h2>Sandbox containment drill</h2><div id="containment"></div></div>
+      <div class="panel"><h2>Post-action verifier</h2><div id="verifier"></div></div>
+    </div>
+    <div class="panel"><h2>Audit timeline</h2><div class="scroll"><table id="timeline" class="timeline"></table></div></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id)
+// All content is inserted as text, never as HTML: the untrusted input stays inert.
+const el = (tag, text, cls) => {
+  const node = document.createElement(tag)
+  if (text !== undefined) node.textContent = text
+  if (cls) node.className = cls
+  return node
+}
+const row = (cells, tag = 'td') => {
+  const tr = document.createElement('tr')
+  for (const cell of cells) {
+    const td = document.createElement(tag)
+    td.append(cell instanceof Node ? cell : document.createTextNode(cell ?? ''))
+    tr.append(td)
+  }
+  return tr
+}
+const TONE = {
+  ALLOW: 'ok', REQUIRE_APPROVAL: 'warn', BLOCK: 'bad',
+  executed: 'ok', would_execute: 'bad', blocked: 'ok', rejected: 'ok', held: 'warn', failed: 'warn',
+  SAFE: 'ok', CONTAINED: 'ok', FAILED_SAFE: 'warn', PARTIALLY_PROTECTED: 'warn', UNSAFE: 'bad',
+}
+const badge = text => el('span', text, 'badge ' + (TONE[text] || 'plain'))
+const target = a => a.args.path || a.args.url || a.args.command || a.args.name || a.args.target || ''
+
+let approve = '0'
+
+function render(r) {
+  const m = r.metrics
+  $('outcome').replaceChildren(
+    el('span', r.outcome, 'badge big ' + TONE[r.outcome]),
+    ...[[`${m.unsafe_effective} / ${m.unsafe_requested}`, 'unsafe actions that took effect'],
+        [m.blocked, 'blocked by policy'], [m.secrets_exposed, 'secrets exposed'],
+        [m.task_completed ? 'yes' : 'no', 'user task completed']].map(([value, label]) => {
+      const box = el('div', undefined, 'metric')
+      box.append(el('b', String(value)), el('span', label))
+      return box
+    }))
+
+  const chain = ['agent', ...r.all_layers].flatMap((name, i) => {
+    const on = name === 'agent' || r.layers.includes(name)
+    const pill = el('span', name.replace('_', ' '), 'pill ' + (on ? 'on' : 'off'))
+    return i ? [el('span', '→', 'arrow'), pill] : [pill]
+  })
+  $('chain').replaceChildren(...chain)
+
+  $('intent').textContent = r.intent.task + '\n\nexpected result: ' + r.intent.expected_files.join(', ') +
+    '\ntools the task needs: ' + r.intent.allowed_tools.join(', ')
+  $('untrusted').textContent = r.untrusted
+  $('injection').textContent = r.layers.includes('injection_check')
+    ? 'Injection check flagged: ' + (r.injection.join(', ') || 'nothing')
+    : 'Injection check is not enabled in this scenario.'
+
+  $('actions').replaceChildren(
+    row(['Tool', 'Target', 'Decision', 'Result', 'Why'], 'th'),
+    ...r.actions.map(a => {
+      const why = [a.reason, ...a.gate_findings.map(f => 'runtime gate: ' + f),
+                   a.approval !== 'not_required' ? 'human: ' + a.approval : null,
+                   a.status === 'would_execute' ? 'simulated: no control stopped it' : null,
+                   a.sandbox && !a.sandbox.ok ? a.sandbox.error : null].filter(Boolean).join(' · ')
+      return row([el('code', a.tool), el('code', target(a)), a.decision ? badge(a.decision) : el('span', 'no check', 'note'),
+                  badge(a.status), el('span', why, 'note')])
+    }))
+
+  const drill = r.containment.length
+    ? (() => {
+        const list = el('ul')
+        r.containment.forEach(c => list.append(el('li', `${c.tool}: ${c.detail}`)))
+        const intro = el('p', 'Blocked actions replayed inside the sandbox, as if every gate above had failed:', 'note')
+        const box = el('div'); box.append(intro, list); return box
+      })()
+    : el('p', 'No sandbox in this scenario. Actions that got through are recorded as "would execute".', 'note')
+  $('containment').replaceChildren(drill)
+
+  if (r.verifier) {
+    const list = el('ul')
+    r.verifier.findings.forEach(f => list.append(el('li', f)))
+    const files = el('p', 'Workspace after the run: ' + (r.verifier.files.join(', ') || 'empty'), 'note')
+    const verdict = r.verifier.ok ? 'state matches intent' : 'FAILED – result withheld'
+    $('verifier').replaceChildren(el('span', verdict, 'badge ' + (r.verifier.ok ? 'ok' : 'warn')), list, files)
+  } else {
+    $('verifier').replaceChildren(el('p', 'No verifier in this scenario. Nobody checks the result against the intent.', 'note'))
+  }
+
+  $('timeline').replaceChildren(
+    row(['#', 'Layer', 'Event', 'Detail'], 'th'),
+    ...r.events.map(e => {
+      const { ts, run_id, seq, layer, event, ...rest } = e
+      return row([String(seq), layer, el('code', event), el('span', JSON.stringify(rest), 'note')])
+    }))
+
+  $('result').classList.remove('hidden')
+  $('status').textContent = `Scenario ${r.scenario} – ${r.title}. Audit log and trace: ${r.run_dir}`
+}
+
+async function run(scenario) {
+  document.querySelectorAll('[data-scenario]').forEach(b => {
+    b.classList.toggle('active', b.dataset.scenario === scenario)
+    b.disabled = true
+  })
+  $('status').textContent = scenario === 'C' ? 'Running in the Docker sandbox…' : 'Running…'
+  try {
+    const response = await fetch(`/api/run?scenario=${scenario}&approve=${approve}`)
+    render(await response.json())
+  } catch (error) {
+    $('status').textContent = 'Run failed: ' + error
+  }
+  document.querySelectorAll('[data-scenario]').forEach(b => { b.disabled = false })
+}
+
+document.querySelectorAll('[data-scenario]').forEach(b => b.addEventListener('click', () => run(b.dataset.scenario)))
+document.querySelectorAll('[data-approve]').forEach(b => b.addEventListener('click', () => {
+  approve = b.dataset.approve
+  document.querySelectorAll('[data-approve]').forEach(x => x.classList.toggle('active', x === b))
+  const current = document.querySelector('[data-scenario].active')
+  if (current && current.dataset.scenario === 'C') run('C')
+}))
+</script>
+</body>
+</html>
